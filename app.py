@@ -204,7 +204,7 @@ INFO_COLOR = "#3B82F6"
 # =====================================================
 # PREMIUM UI STYLING (Enhanced)
 # =====================================================
-st.markdown(f"""
+st.markdown("""
 <style>
     /* Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
