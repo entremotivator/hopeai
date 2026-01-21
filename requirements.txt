@@ -12,7 +12,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 
 # Visualization
-plotly>=5.18.0
+plotly
 
 # LangChain Core
 langchain>=0.1.0
