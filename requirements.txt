@@ -1,6 +1,4 @@
-# AI Hope Wellness - Streamlit Community Cloud Requirements
-# Created by The ATM Agency
-streamlit-antd-components
+
 # OpenAI
 openai>=1.12.0
 
