@@ -2600,25 +2600,48 @@ nav_options = [
 # Use streamlit-antd-components for a professional horizontal menu
 with st.container():
     cols = st.columns([1, 4])
+
+    # Left logo
     with cols[0]:
-        st.markdown(f'<div class="nav-logo" style="margin-top: 10px;"><span>🏥</span> {BRAND_NAME}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="nav-logo" style="margin-top: 10px;"><span>🏥</span> {BRAND_NAME}</div>',
+            unsafe_allow_html=True
+        )
+
+    # Right menu
     with cols[1]:
+        # Define menu items safely
+        nav_items = [
+            sac.MenuItem("Executive Dashboard", icon="speedometer2"),
+            sac.MenuItem("Document Intelligence", icon="file-earmark-medical"),
+            sac.MenuItem("Specialist Consultation", icon="people"),
+            sac.MenuItem("Biomarker Laboratory", icon="activity"),
+            sac.MenuItem("Wellness Protocols", icon="clipboard-check"),
+            sac.MenuItem("Health Analytics", icon="graph-up"),
+            sac.MenuItem("Settings", icon="gear"),
+        ]
+
+        # Ensure current page is in nav_items, otherwise default to first item
+        current_page = st.session_state.get("current_page")
+        if current_page not in [item.label for item in nav_items]:
+            current_page = nav_items[0].label
+            st.session_state.current_page = current_page
+
+        # Find index safely
+        index = next(
+            (i for i, item in enumerate(nav_items) if item.label == current_page),
+            0
+        )
+
+        # Call sac.menu with only safe arguments
         selected_page = sac.menu(
-            items=[
-                sac.MenuItem("Executive Dashboard", icon="speedometer2"),
-                sac.MenuItem("Document Intelligence", icon="file-earmark-medical"),
-                sac.MenuItem("Specialist Consultation", icon="people"),
-                sac.MenuItem("Biomarker Laboratory", icon="activity"),
-                sac.MenuItem("Wellness Protocols", icon="clipboard-check"),
-                sac.MenuItem("Health Analytics", icon="graph-up"),
-                sac.MenuItem("Settings", icon="gear"),
-            ],
-            index=nav_options.index(st.session_state.current_page),
-            format_func=lambda x: x,
-            direction="horizontal",
-            variant="light",
+            items=nav_items,
+            index=index,
             key="nav_menu"
         )
+
+        # Update session state
+        st.session_state.current_page = selected_page
 
 if selected_page != st.session_state.current_page:
     st.session_state.current_page = selected_page
