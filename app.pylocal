@@ -1,0 +1,1717 @@
+import streamlit as st
+import os
+import json
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+from openai import OpenAI
+import base64
+import tempfile
+import hashlib
+from typing import List, Dict, Any, Optional
+from io import BytesIO
+
+# --- LANGCHAIN IMPORTS ---
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
+from langchain_community.document_loaders import (
+    PyPDFLoader,
+    Docx2txtLoader,
+    TextLoader,
+    CSVLoader,
+    UnstructuredExcelLoader,
+    JSONLoader,
+    UnstructuredHTMLLoader,
+    UnstructuredMarkdownLoader,
+    UnstructuredPowerPointLoader,
+    UnstructuredXMLLoader,
+    UnstructuredRTFLoader,
+    UnstructuredEPubLoader,
+    UnstructuredODTLoader,
+)
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.vectorstores import FAISS
+from langchain.chains import ConversationalRetrievalChain, RetrievalQA
+from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
+from langchain.prompts import PromptTemplate, ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain.schema import Document, HumanMessage, AIMessage, SystemMessage
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from langchain.chains.summarize import load_summarize_chain
+from langchain.chains.question_answering import load_qa_chain
+
+# --- BRANDING & CONFIGURATION ---
+BRAND_NAME = "AI Hope Wellness"
+CREATED_BY = "The ATM Agency"
+PRIMARY_COLOR = "#1E3A8A"
+SECONDARY_COLOR = "#10B981"
+ACCENT_COLOR = "#F59E0B"
+TERTIARY_COLOR = "#8B5CF6"
+
+# --- SUPPORTED FILE FORMATS ---
+SUPPORTED_FORMATS = {
+    "Documents": {
+        "pdf": {"loader": PyPDFLoader, "desc": "PDF Documents", "icon": "📄"},
+        "docx": {"loader": Docx2txtLoader, "desc": "Microsoft Word", "icon": "📝"},
+        "doc": {"loader": Docx2txtLoader, "desc": "Microsoft Word (Legacy)", "icon": "📝"},
+        "txt": {"loader": TextLoader, "desc": "Plain Text", "icon": "📃"},
+        "rtf": {"loader": UnstructuredRTFLoader, "desc": "Rich Text Format", "icon": "📋"},
+        "odt": {"loader": UnstructuredODTLoader, "desc": "OpenDocument Text", "icon": "📄"},
+    },
+    "Spreadsheets": {
+        "csv": {"loader": CSVLoader, "desc": "CSV Files", "icon": "📊"},
+        "xlsx": {"loader": UnstructuredExcelLoader, "desc": "Microsoft Excel", "icon": "📈"},
+        "xls": {"loader": UnstructuredExcelLoader, "desc": "Excel (Legacy)", "icon": "📈"},
+    },
+    "Data Formats": {
+        "json": {"loader": JSONLoader, "desc": "JSON Data", "icon": "🔧"},
+        "xml": {"loader": UnstructuredXMLLoader, "desc": "XML Data", "icon": "🔩"},
+    },
+    "Web & Markup": {
+        "html": {"loader": UnstructuredHTMLLoader, "desc": "HTML Pages", "icon": "🌐"},
+        "htm": {"loader": UnstructuredHTMLLoader, "desc": "HTML Pages", "icon": "🌐"},
+        "md": {"loader": UnstructuredMarkdownLoader, "desc": "Markdown", "icon": "📑"},
+        "markdown": {"loader": UnstructuredMarkdownLoader, "desc": "Markdown", "icon": "📑"},
+    },
+    "Presentations": {
+        "pptx": {"loader": UnstructuredPowerPointLoader, "desc": "PowerPoint", "icon": "📽️"},
+        "ppt": {"loader": UnstructuredPowerPointLoader, "desc": "PowerPoint (Legacy)", "icon": "📽️"},
+    },
+    "E-Books": {
+        "epub": {"loader": UnstructuredEPubLoader, "desc": "EPUB E-Books", "icon": "📚"},
+    },
+    "Images (OCR)": {
+        "png": {"loader": "vision", "desc": "PNG Images", "icon": "🖼️"},
+        "jpg": {"loader": "vision", "desc": "JPEG Images", "icon": "🖼️"},
+        "jpeg": {"loader": "vision", "desc": "JPEG Images", "icon": "🖼️"},
+        "webp": {"loader": "vision", "desc": "WebP Images", "icon": "🖼️"},
+        "gif": {"loader": "vision", "desc": "GIF Images", "icon": "🖼️"},
+        "bmp": {"loader": "vision", "desc": "Bitmap Images", "icon": "🖼️"},
+        "tiff": {"loader": "vision", "desc": "TIFF Images", "icon": "🖼️"},
+    }
+}
+
+ALL_EXTENSIONS = []
+for category in SUPPORTED_FORMATS.values():
+    ALL_EXTENSIONS.extend(category.keys())
+
+st.set_page_config(
+    page_title=f"{BRAND_NAME} | Premium Health Intelligence",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- LUXURY UI STYLING ---
+st.markdown(f"""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    
+    html, body, [class*="css"] {{
+        font-family: 'Inter', sans-serif;
+    }}
+    
+    .stApp {{
+        background: linear-gradient(135deg, #F8FAFC 0%, #E2E8F0 50%, #F1F5F9 100%);
+    }}
+    
+    .main-header {{
+        background: linear-gradient(135deg, white 0%, #F8FAFC 100%);
+        padding: 2.5rem;
+        border-radius: 24px;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        margin-bottom: 2rem;
+        border-left: 8px solid {PRIMARY_COLOR};
+        position: relative;
+        overflow: hidden;
+    }}
+    
+    .main-header::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 200px;
+        height: 200px;
+        background: linear-gradient(135deg, {SECONDARY_COLOR}20, {PRIMARY_COLOR}10);
+        border-radius: 50%;
+        transform: translate(50%, -50%);
+    }}
+    
+    .agency-footer {{
+        text-align: center;
+        padding: 2.5rem;
+        color: #64748B;
+        font-size: 0.9rem;
+        border-top: 2px solid #E2E8F0;
+        margin-top: 4rem;
+        background: white;
+        border-radius: 20px 20px 0 0;
+    }}
+    
+    .wellness-card {{
+        background: white;
+        padding: 1.75rem;
+        border-radius: 18px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        border: 1px solid #E2E8F0;
+        transition: all 0.3s ease;
+    }}
+    
+    .wellness-card:hover {{
+        transform: translateY(-8px);
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        border-color: {SECONDARY_COLOR};
+    }}
+    
+    .stat-card {{
+        background: linear-gradient(135deg, white 0%, #F8FAFC 100%);
+        padding: 1.5rem;
+        border-radius: 16px;
+        border: 1px solid #E2E8F0;
+        text-align: center;
+    }}
+    
+    .stat-value {{
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, {PRIMARY_COLOR}, {SECONDARY_COLOR});
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }}
+    
+    .langchain-badge {{
+        background: linear-gradient(135deg, {TERTIARY_COLOR}, {PRIMARY_COLOR});
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        display: inline-block;
+        margin-bottom: 1rem;
+    }}
+    
+    .format-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 0.75rem;
+        margin: 1rem 0;
+    }}
+    
+    .format-chip {{
+        background: #F1F5F9;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        font-size: 0.75rem;
+        text-align: center;
+        border: 1px solid #E2E8F0;
+    }}
+    
+    .processing-step {{
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: #F8FAFC;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        border-left: 4px solid {SECONDARY_COLOR};
+    }}
+    
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+        color: white;
+    }}
+    
+    [data-testid="stSidebar"] * {{
+        color: white !important;
+    }}
+    
+    .stButton>button {{
+        background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #2563EB 100%);
+        color: white;
+        border-radius: 12px;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }}
+    
+    .stButton>button:hover {{
+        background: linear-gradient(135deg, {SECONDARY_COLOR} 0%, #059669 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
+    }}
+    
+    .document-preview {{
+        background: #1E293B;
+        color: #E2E8F0;
+        padding: 1.5rem;
+        border-radius: 12px;
+        font-family: 'Monaco', 'Consolas', monospace;
+        font-size: 0.85rem;
+        max-height: 400px;
+        overflow-y: auto;
+    }}
+    
+    .chunk-card {{
+        background: white;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-left: 4px solid {ACCENT_COLOR};
+    }}
+    
+    .vector-viz {{
+        background: linear-gradient(135deg, #0F172A, #1E293B);
+        padding: 2rem;
+        border-radius: 16px;
+        color: white;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# --- CLINICAL REGISTRY (EXPANDED) ---
+SPECIALISTS = {
+    "Chief Medical Officer": {
+        "icon": "👨‍⚕️",
+        "bio": "Expert in integrative medicine, clinical strategy, and executive health optimization.",
+        "color": PRIMARY_COLOR,
+        "prompt": """You are the Chief Medical Officer of AI Hope Wellness, a premium health intelligence platform. 
+        You provide high-level, strategic health guidance integrating all aspects of longevity, metabolic health, and preventive care.
+        You have access to the patient's uploaded documents and lab results through our LangChain-powered document analysis system.
+        Always provide evidence-based recommendations while maintaining a premium, clinical, and supportive tone.
+        When analyzing documents, extract key biomarkers, identify trends, and provide actionable insights.
+        Include relevant citations when discussing research. Always include a medical disclaimer at the end."""
+    },
+    "Peptide & Bio-Regulator Expert": {
+        "icon": "🧬",
+        "bio": "Specialist in BPC-157, Epitalon, Thymosin, and cellular signaling pathways.",
+        "color": SECONDARY_COLOR,
+        "prompt": """You are a world-leading Peptide and Bio-Regulator Specialist at AI Hope Wellness.
+        Your expertise covers:
+        - Tissue repair peptides (BPC-157, TB-500, GHK-Cu)
+        - Immune modulators (Thymosin Alpha-1, LL-37)
+        - Longevity peptides (Epitalon, FOXO4-DRI)
+        - Growth hormone secretagogues (CJC-1295, Ipamorelin, Tesamorelin)
+        - NAD+ precursors and cellular health
+        
+        When analyzing documents, identify relevant biomarkers that would inform peptide protocols.
+        Discuss mechanisms of action, dosing considerations, and synergistic combinations.
+        Always emphasize safety, proper sourcing, and medical supervision. Include a disclaimer."""
+    },
+    "Hormone Optimization MD": {
+        "icon": "⚖️",
+        "bio": "Expert in TRT, HRT, thyroid optimization, and comprehensive endocrine balance.",
+        "color": ACCENT_COLOR,
+        "prompt": """You are a Senior Endocrinologist specializing in hormone optimization at AI Hope Wellness.
+        Your expertise includes:
+        - Testosterone Replacement Therapy (TRT) for men
+        - Hormone Replacement Therapy (HRT) for women
+        - Thyroid optimization (T3, T4, rT3, antibodies)
+        - Adrenal health and cortisol management
+        - Insulin sensitivity and metabolic hormones
+        - DHEA, Pregnenolone, and neurosteroids
+        
+        When analyzing lab results, focus on optimal ranges (not just reference ranges).
+        Discuss the interplay between different hormones and their downstream effects.
+        Provide protocol considerations while emphasizing regular monitoring. Include a disclaimer."""
+    },
+    "Functional Nutritionist": {
+        "icon": "🥗",
+        "bio": "Specialist in nutrigenomics, gut-brain axis, and metabolic nutrition protocols.",
+        "color": "#EC4899",
+        "prompt": """You are a Functional Nutritionist at AI Hope Wellness with expertise in:
+        - Nutrigenomics and personalized nutrition
+        - Gut microbiome optimization
+        - Elimination diets and food sensitivity protocols
+        - Metabolic flexibility and ketogenic strategies
+        - Targeted supplementation
+        - Circadian nutrition and meal timing
+        
+        When analyzing documents, identify nutritional deficiencies, inflammatory markers, and metabolic indicators.
+        Provide specific food recommendations, supplement protocols, and lifestyle modifications.
+        Consider the gut-brain-immune axis in all recommendations. Include a disclaimer."""
+    },
+    "Performance & Longevity Coach": {
+        "icon": "⚡",
+        "bio": "Expert in VO2 Max optimization, strength training, and biological age reversal strategies.",
+        "color": "#06B6D4",
+        "prompt": """You are a Performance and Longevity Coach at AI Hope Wellness specializing in:
+        - VO2 Max and cardiorespiratory fitness
+        - Zone 2 training and mitochondrial efficiency
+        - Strength training for longevity
+        - Biological age assessment and reversal
+        - Sleep optimization and recovery
+        - Sauna, cold exposure, and hormetic stressors
+        
+        When analyzing documents, identify fitness markers, inflammatory indicators, and recovery metrics.
+        Provide periodized training recommendations and lifestyle interventions.
+        Focus on sustainable, evidence-based protocols for healthspan extension. Include a disclaimer."""
+    },
+    "Sleep & Circadian Specialist": {
+        "icon": "🌙",
+        "bio": "Expert in sleep architecture, circadian rhythm optimization, and chronobiology.",
+        "color": "#6366F1",
+        "prompt": """You are a Sleep and Circadian Specialist at AI Hope Wellness with expertise in:
+        - Sleep architecture and stage optimization
+        - Circadian rhythm entrainment
+        - Melatonin and sleep hormone regulation
+        - Sleep apnea and breathing disorders
+        - Chronotherapy and light exposure protocols
+        - Supplements and interventions for sleep quality
+        
+        When analyzing documents, identify sleep-related markers, cortisol patterns, and metabolic indicators.
+        Provide comprehensive sleep hygiene protocols and targeted interventions.
+        Consider the bidirectional relationship between sleep and all health markers. Include a disclaimer."""
+    },
+    "Mental Health & Neuroptimization": {
+        "icon": "🧠",
+        "bio": "Specialist in cognitive enhancement, mood optimization, and brain health protocols.",
+        "color": "#8B5CF6",
+        "prompt": """You are a Mental Health and Neuroptimization Specialist at AI Hope Wellness focusing on:
+        - Cognitive enhancement and nootropics
+        - Mood and neurotransmitter optimization
+        - Brain-derived neurotrophic factor (BDNF)
+        - Neuroplasticity and learning
+        - Stress resilience and HPA axis
+        - Psychedelic-assisted therapy considerations
+        
+        When analyzing documents, identify neurological markers, inflammatory indicators, and metabolic factors affecting brain health.
+        Provide evidence-based recommendations for cognitive optimization and mental wellness.
+        Address the mind-body connection in all recommendations. Include a disclaimer."""
+    }
+}
+
+# --- LANGCHAIN DOCUMENT PROCESSOR CLASS ---
+class HealthDocumentProcessor:
+    def __init__(self):
+        self.embeddings = OpenAIEmbeddings()
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=200,
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        self.vector_store = None
+        self.documents = []
+        self.chat_memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True,
+            output_key="answer"
+        )
+        
+    def get_file_hash(self, file_content: bytes) -> str:
+        """Generate unique hash for file to prevent duplicate processing."""
+        return hashlib.md5(file_content).hexdigest()
+    
+    def load_document(self, file_path: str, file_type: str) -> List[Document]:
+        """Load document using appropriate LangChain loader."""
+        documents = []
+        
+        try:
+            if file_type == "pdf":
+                loader = PyPDFLoader(file_path)
+                documents = loader.load()
+            elif file_type in ["docx", "doc"]:
+                loader = Docx2txtLoader(file_path)
+                documents = loader.load()
+            elif file_type == "txt":
+                loader = TextLoader(file_path, encoding='utf-8')
+                documents = loader.load()
+            elif file_type == "csv":
+                loader = CSVLoader(file_path)
+                documents = loader.load()
+            elif file_type in ["xlsx", "xls"]:
+                loader = UnstructuredExcelLoader(file_path)
+                documents = loader.load()
+            elif file_type == "json":
+                loader = JSONLoader(file_path, jq_schema='.', text_content=False)
+                documents = loader.load()
+            elif file_type in ["html", "htm"]:
+                loader = UnstructuredHTMLLoader(file_path)
+                documents = loader.load()
+            elif file_type in ["md", "markdown"]:
+                loader = UnstructuredMarkdownLoader(file_path)
+                documents = loader.load()
+            elif file_type in ["pptx", "ppt"]:
+                loader = UnstructuredPowerPointLoader(file_path)
+                documents = loader.load()
+            elif file_type == "xml":
+                loader = UnstructuredXMLLoader(file_path)
+                documents = loader.load()
+            elif file_type == "rtf":
+                loader = UnstructuredRTFLoader(file_path)
+                documents = loader.load()
+            elif file_type == "epub":
+                loader = UnstructuredEPubLoader(file_path)
+                documents = loader.load()
+            elif file_type == "odt":
+                loader = UnstructuredODTLoader(file_path)
+                documents = loader.load()
+        except Exception as e:
+            st.error(f"Error loading {file_type} file: {str(e)}")
+            documents = [Document(page_content=f"Error loading file: {str(e)}", metadata={"source": file_path})]
+            
+        return documents
+    
+    def process_image_with_vision(self, image_bytes: bytes, filename: str) -> List[Document]:
+        """Process image using GPT-4 Vision for OCR and analysis."""
+        try:
+            client = OpenAI()
+            b64_image = base64.b64encode(image_bytes).decode('utf-8')
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a medical document analyzer. Extract ALL text, numbers, and data from this image.
+                        If it's a lab report, extract all biomarker names, values, units, and reference ranges.
+                        If it's a medical document, extract all relevant clinical information.
+                        Format the extracted data in a clear, structured manner."""
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Extract and analyze all content from this medical/health document:"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}
+                        ]
+                    }
+                ],
+                max_tokens=4096
+            )
+            
+            extracted_text = response.choices[0].message.content
+            return [Document(page_content=extracted_text, metadata={"source": filename, "type": "image_ocr"})]
+            
+        except Exception as e:
+            return [Document(page_content=f"Error processing image: {str(e)}", metadata={"source": filename})]
+    
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
+        """Split documents into optimized chunks for retrieval."""
+        return self.text_splitter.split_documents(documents)
+    
+    def create_vector_store(self, documents: List[Document]) -> FAISS:
+        """Create FAISS vector store from documents."""
+        chunks = self.chunk_documents(documents)
+        self.documents = chunks
+        self.vector_store = FAISS.from_documents(chunks, self.embeddings)
+        return self.vector_store
+    
+    def add_to_vector_store(self, documents: List[Document]):
+        """Add new documents to existing vector store."""
+        chunks = self.chunk_documents(documents)
+        self.documents.extend(chunks)
+        
+        if self.vector_store is None:
+            self.vector_store = FAISS.from_documents(chunks, self.embeddings)
+        else:
+            self.vector_store.add_documents(chunks)
+    
+    def get_retrieval_chain(self, specialist_prompt: str) -> ConversationalRetrievalChain:
+        """Create conversational retrieval chain for document Q&A."""
+        if self.vector_store is None:
+            return None
+            
+        llm = ChatOpenAI(
+            model_name="gpt-4o",
+            temperature=0.3,
+            streaming=True
+        )
+        
+        condense_prompt = PromptTemplate.from_template(
+            """Given the following conversation and a follow up question, rephrase the follow up question 
+            to be a standalone question that incorporates relevant context from the chat history.
+            
+            Chat History:
+            {chat_history}
+            
+            Follow Up Input: {question}
+            Standalone question:"""
+        )
+        
+        qa_prompt = ChatPromptTemplate.from_messages([
+            SystemMessagePromptTemplate.from_template(specialist_prompt),
+            HumanMessagePromptTemplate.from_template(
+                """Use the following pieces of context from the patient's health documents to answer the question.
+                If you don't know the answer based on the context, say so and provide general guidance.
+                
+                Context from documents:
+                {context}
+                
+                Question: {question}
+                
+                Provide a thorough, clinically-informed response:"""
+            )
+        ])
+        
+        chain = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=self.vector_store.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": 6, "fetch_k": 12}
+            ),
+            memory=self.chat_memory,
+            combine_docs_chain_kwargs={"prompt": qa_prompt},
+            condense_question_prompt=condense_prompt,
+            return_source_documents=True,
+            verbose=False
+        )
+        
+        return chain
+    
+    def semantic_search(self, query: str, k: int = 5) -> List[Document]:
+        """Perform semantic search across all documents."""
+        if self.vector_store is None:
+            return []
+        return self.vector_store.similarity_search(query, k=k)
+    
+    def summarize_documents(self) -> str:
+        """Generate a comprehensive summary of all loaded documents."""
+        if not self.documents:
+            return "No documents loaded."
+            
+        llm = ChatOpenAI(model_name="gpt-4o", temperature=0.3)
+        chain = load_summarize_chain(llm, chain_type="map_reduce")
+        
+        # Limit to prevent token overflow
+        docs_to_summarize = self.documents[:20]
+        summary = chain.run(docs_to_summarize)
+        return summary
+    
+    def extract_biomarkers(self) -> Dict[str, Any]:
+        """Extract and structure biomarker data from documents."""
+        if self.vector_store is None:
+            return {}
+            
+        llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+        
+        extraction_prompt = """Analyze the following health document content and extract ALL biomarkers, lab values, and health metrics.
+        Return the data as a JSON object with the following structure:
+        {
+            "biomarkers": [
+                {"name": "...", "value": "...", "unit": "...", "reference_range": "...", "status": "optimal/normal/elevated/low"}
+            ],
+            "date": "...",
+            "document_type": "...",
+            "key_findings": ["...", "..."]
+        }
+        
+        Content to analyze:
+        {context}
+        
+        Return ONLY valid JSON:"""
+        
+        relevant_docs = self.semantic_search("lab results biomarkers blood test values", k=10)
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        
+        response = llm.invoke(extraction_prompt.format(context=context))
+        
+        try:
+            return json.loads(response.content)
+        except:
+            return {"raw_response": response.content}
+
+
+# --- SESSION STATE MANAGEMENT ---
+def initialize_state():
+    if "messages" not in st.session_state:
+        st.session_state.messages = {k: [] for k in SPECIALISTS.keys()}
+    if "patient_data" not in st.session_state:
+        dates = [datetime.now() - timedelta(days=i*7) for i in range(24, 0, -1)]
+        st.session_state.patient_data = pd.DataFrame({
+            "Date": dates,
+            "HbA1c": np.clip(np.random.normal(5.2, 0.2, 24), 4.5, 6.5),
+            "Testosterone": np.clip(np.random.normal(650, 50, 24), 400, 900),
+            "CRP": np.clip(np.random.normal(0.8, 0.3, 24), 0.1, 3.0),
+            "Vitamin_D": np.clip(np.random.normal(45, 5, 24), 20, 80),
+            "Body_Fat": np.clip(np.random.normal(18, 1, 24), 10, 30),
+            "Fasting_Glucose": np.clip(np.random.normal(92, 5, 24), 70, 120),
+            "HDL": np.clip(np.random.normal(55, 8, 24), 35, 85),
+            "LDL": np.clip(np.random.normal(110, 15, 24), 70, 180),
+            "Triglycerides": np.clip(np.random.normal(100, 20, 24), 50, 200),
+            "TSH": np.clip(np.random.normal(2.0, 0.5, 24), 0.5, 5.0),
+        })
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "Executive Dashboard"
+    if "active_specialist" not in st.session_state:
+        st.session_state.active_specialist = list(SPECIALISTS.keys())[0]
+    if "doc_processor" not in st.session_state:
+        st.session_state.doc_processor = HealthDocumentProcessor()
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = []
+    if "document_summary" not in st.session_state:
+        st.session_state.document_summary = None
+    if "extracted_biomarkers" not in st.session_state:
+        st.session_state.extracted_biomarkers = None
+
+initialize_state()
+
+
+# --- AI ENGINE WITH LANGCHAIN ---
+def call_ai_specialist(specialist_name: str, user_input: str, history: List[Dict], image: Optional[Any] = None) -> str:
+    """Enhanced AI call with LangChain document retrieval."""
+    try:
+        client = OpenAI()
+        spec = SPECIALISTS[specialist_name]
+        processor = st.session_state.doc_processor
+        
+        # Build context from documents if available
+        doc_context = ""
+        if processor.vector_store is not None:
+            relevant_docs = processor.semantic_search(user_input, k=5)
+            if relevant_docs:
+                doc_context = "\n\n--- RELEVANT PATIENT DOCUMENTS ---\n"
+                for i, doc in enumerate(relevant_docs, 1):
+                    doc_context += f"\n[Document {i}]:\n{doc.page_content[:1000]}...\n"
+                doc_context += "\n--- END DOCUMENTS ---\n"
+        
+        system_prompt = f"""{spec['prompt']}
+
+This is AI Hope Wellness, a premium health intelligence platform created by The ATM Agency.
+{doc_context}
+
+Maintain a premium, clinical, and supportive tone throughout your response.
+Structure your response clearly with headers and bullet points where appropriate.
+Always conclude with a medical disclaimer."""
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history
+        for m in history[-10:]:
+            messages.append(m)
+        
+        # Handle image input
+        if image:
+            b64_img = base64.b64encode(image.getvalue()).decode('utf-8')
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Analyzing clinical document: {user_input}"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
+                ]
+            })
+        else:
+            messages.append({"role": "user", "content": user_input})
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.4,
+            max_tokens=4096
+        )
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        return f"⚠️ System Error: {str(e)}\n\nPlease ensure your OpenAI API key is configured correctly."
+
+
+def call_document_qa(question: str, specialist_name: str) -> tuple[str, List[Document]]:
+    """Use LangChain retrieval chain for document-based Q&A."""
+    processor = st.session_state.doc_processor
+    spec = SPECIALISTS[specialist_name]
+    
+    chain = processor.get_retrieval_chain(spec['prompt'])
+    if chain is None:
+        return "No documents have been uploaded yet. Please upload health documents first.", []
+    
+    result = chain({"question": question})
+    return result["answer"], result.get("source_documents", [])
+
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.markdown(f"""
+    <div style='padding: 1rem 0;'>
+        <h1 style='color: white; margin: 0; font-size: 1.5rem;'>🏥 {BRAND_NAME}</h1>
+        <p style='color: #94A3B8; margin: 0.5rem 0 0 0; font-size: 0.85rem;'>Powered by LangChain</p>
+        <p style='color: #64748B; margin: 0; font-size: 0.75rem;'>By {CREATED_BY}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    st.session_state.current_page = st.radio(
+        "Portal Navigation",
+        [
+            "Executive Dashboard",
+            "Document Intelligence",
+            "Specialist Consultation",
+            "Biomarker Lab",
+            "Wellness Protocols",
+            "Analytics & Trends",
+            "Settings"
+        ],
+        label_visibility="collapsed"
+    )
+    
+    st.markdown("---")
+    
+    # Specialist selector
+    if st.session_state.current_page in ["Specialist Consultation", "Document Intelligence"]:
+        st.session_state.active_specialist = st.selectbox(
+            "Select Specialist",
+            options=list(SPECIALISTS.keys())
+        )
+        spec = SPECIALISTS[st.session_state.active_specialist]
+        st.markdown(f"""
+        <div style='background: #1E293B; padding: 1rem; border-radius: 12px; border: 1px solid #334155; border-left: 4px solid {spec['color']};'>
+            <h4 style='margin:0; font-size: 0.95rem;'>{spec['icon']} {st.session_state.active_specialist}</h4>
+            <p style='font-size: 0.75rem; color: #94A3B8; margin: 0.5rem 0 0 0;'>{spec['bio']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Document stats
+    st.markdown("---")
+    st.markdown("### 📊 Document Status")
+    num_docs = len(st.session_state.doc_processor.documents)
+    num_files = len(st.session_state.uploaded_files)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Files", num_files)
+    with col2:
+        st.metric("Chunks", num_docs)
+    
+    if st.session_state.doc_processor.vector_store is not None:
+        st.success("✓ Vector Store Active")
+    
+    st.markdown("---")
+    if st.button("🔒 Secure Logout", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
+
+# --- MAIN PAGES ---
+
+if st.session_state.current_page == "Executive Dashboard":
+    st.markdown(f"""
+    <div class="main-header">
+        <span class="langchain-badge">🦜 Powered by LangChain</span>
+        <h1 style='margin:0; color: {PRIMARY_COLOR}; font-size: 2.2rem;'>{BRAND_NAME}</h1>
+        <h2 style='color: {SECONDARY_COLOR}; font-weight: 400; font-size: 1.2rem; margin-top: 0.5rem;'>Executive Health Intelligence Dashboard</h2>
+        <p style='color: #64748B; margin-top: 1rem;'>Welcome back. Your comprehensive health trajectory and AI-powered insights await.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Key Metrics
+    st.markdown("### 📈 Key Biomarkers")
+    latest = st.session_state.patient_data.iloc[-1]
+    prev = st.session_state.patient_data.iloc[-2]
+    
+    cols = st.columns(5)
+    metrics = [
+        ("HbA1c", f"{latest['HbA1c']:.1f}%", latest['HbA1c']-prev['HbA1c'], True),
+        ("Testosterone", f"{latest['Testosterone']:.0f} ng/dL", latest['Testosterone']-prev['Testosterone'], False),
+        ("CRP", f"{latest['CRP']:.2f} mg/L", latest['CRP']-prev['CRP'], True),
+        ("Vitamin D", f"{latest['Vitamin_D']:.0f} ng/mL", latest['Vitamin_D']-prev['Vitamin_D'], False),
+        ("Body Fat", f"{latest['Body_Fat']:.1f}%", latest['Body_Fat']-prev['Body_Fat'], True),
+    ]
+    
+    for col, (name, value, delta, inv) in zip(cols, metrics):
+        with col:
+            st.metric(name, value, f"{delta:+.1f}", delta_color="inverse" if inv else "normal")
+    
+    st.markdown("---")
+    
+    # Charts
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        fig = px.line(
+            st.session_state.patient_data, 
+            x="Date", 
+            y=["Testosterone", "Vitamin_D"],
+            title="Hormonal & Micronutrient Trajectory",
+            template="plotly_white",
+            color_discrete_sequence=[PRIMARY_COLOR, SECONDARY_COLOR]
+        )
+        fig.update_layout(
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col_right:
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=st.session_state.patient_data["Date"],
+            y=st.session_state.patient_data["HbA1c"],
+            fill='tozeroy',
+            fillcolor=f'rgba(245, 158, 11, 0.2)',
+            line=dict(color=ACCENT_COLOR, width=3),
+            name='HbA1c'
+        ))
+        fig2.update_layout(
+            title="Metabolic Stability (HbA1c)",
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+    
+    # Lipid Panel
+    st.markdown("### 🫀 Cardiovascular Health")
+    lip_cols = st.columns(4)
+    with lip_cols[0]:
+        st.metric("HDL Cholesterol", f"{latest['HDL']:.0f} mg/dL")
+    with lip_cols[1]:
+        st.metric("LDL Cholesterol", f"{latest['LDL']:.0f} mg/dL")
+    with lip_cols[2]:
+        st.metric("Triglycerides", f"{latest['Triglycerides']:.0f} mg/dL")
+    with lip_cols[3]:
+        st.metric("TSH", f"{latest['TSH']:.2f} mIU/L")
+    
+    # Document Status Card
+    st.markdown("---")
+    st.markdown("### 📁 Document Intelligence Status")
+    
+    doc_cols = st.columns([2, 1])
+    with doc_cols[0]:
+        if st.session_state.doc_processor.vector_store is not None:
+            st.success(f"✓ {len(st.session_state.uploaded_files)} document(s) loaded and indexed")
+            st.info(f"📊 {len(st.session_state.doc_processor.documents)} searchable chunks in vector store")
+        else:
+            st.warning("No documents uploaded yet. Visit the Document Intelligence page to upload your health records.")
+    
+    with doc_cols[1]:
+        if st.button("📤 Upload Documents", use_container_width=True):
+            st.session_state.current_page = "Document Intelligence"
+            st.rerun()
+
+
+elif st.session_state.current_page == "Document Intelligence":
+    st.markdown(f"""
+    <div class="main-header">
+        <span class="langchain-badge">🦜 LangChain Document Processing</span>
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>Document Intelligence Center</h1>
+        <p style='color: #64748B;'>Upload, process, and query your health documents with AI-powered analysis.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Supported Formats Display
+    with st.expander("📋 Supported File Formats", expanded=False):
+        for category, formats in SUPPORTED_FORMATS.items():
+            st.markdown(f"**{category}**")
+            format_chips = " ".join([f"`{ext}` {info['icon']}" for ext, info in formats.items()])
+            st.markdown(format_chips)
+        st.markdown("---")
+        st.info("🔬 Images are processed using GPT-4 Vision for OCR and content extraction.")
+    
+    # File Upload Section
+    st.markdown("### 📤 Upload Health Documents")
+    
+    uploaded_files = st.file_uploader(
+        "Drag and drop files here",
+        type=ALL_EXTENSIONS,
+        accept_multiple_files=True,
+        help="Upload lab reports, medical records, prescriptions, and other health documents."
+    )
+    
+    if uploaded_files:
+        st.markdown("### 📄 Processing Queue")
+        
+        process_btn = st.button("🚀 Process All Documents", type="primary", use_container_width=True)
+        
+        if process_btn:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for idx, file in enumerate(uploaded_files):
+                progress = (idx + 1) / len(uploaded_files)
+                progress_bar.progress(progress)
+                status_text.text(f"Processing: {file.name}")
+                
+                file_ext = file.name.split('.')[-1].lower()
+                
+                # Check if already processed
+                file_hash = st.session_state.doc_processor.get_file_hash(file.getvalue())
+                if file_hash in [f.get('hash') for f in st.session_state.uploaded_files]:
+                    st.info(f"⏭️ Skipping {file.name} (already processed)")
+                    continue
+                
+                # Process based on file type
+                if file_ext in ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff']:
+                    # Image processing with Vision
+                    docs = st.session_state.doc_processor.process_image_with_vision(
+                        file.getvalue(), 
+                        file.name
+                    )
+                else:
+                    # Save to temp file and process
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}') as tmp:
+                        tmp.write(file.getvalue())
+                        tmp_path = tmp.name
+                    
+                    docs = st.session_state.doc_processor.load_document(tmp_path, file_ext)
+                    os.unlink(tmp_path)
+                
+                # Add to vector store
+                st.session_state.doc_processor.add_to_vector_store(docs)
+                st.session_state.uploaded_files.append({
+                    'name': file.name,
+                    'type': file_ext,
+                    'hash': file_hash,
+                    'chunks': len(docs)
+                })
+            
+            progress_bar.progress(1.0)
+            status_text.text("✅ All documents processed!")
+            st.success(f"Successfully processed {len(uploaded_files)} document(s)")
+            st.rerun()
+    
+    # Document Status
+    if st.session_state.uploaded_files:
+        st.markdown("### 📚 Document Library")
+        
+        for file_info in st.session_state.uploaded_files:
+            ext = file_info['type']
+            icon = "📄"
+            for cat_formats in SUPPORTED_FORMATS.values():
+                if ext in cat_formats:
+                    icon = cat_formats[ext]['icon']
+                    break
+            
+            st.markdown(f"""
+            <div class="chunk-card">
+                <strong>{icon} {file_info['name']}</strong>
+                <br><small style="color: #64748B;">Type: {ext.upper()} | Chunks: {file_info['chunks']}</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Document Q&A
+        st.markdown("---")
+        st.markdown("### 🔍 Ask Questions About Your Documents")
+        
+        query = st.text_input(
+            "Enter your question",
+            placeholder="What are my vitamin D levels? Are there any concerning biomarkers?"
+        )
+        
+        if query:
+            with st.spinner("Searching documents and generating response..."):
+                answer, sources = call_document_qa(query, st.session_state.active_specialist)
+            
+            st.markdown("#### Response")
+            st.markdown(answer)
+            
+            if sources:
+                with st.expander("📎 Source Documents"):
+                    for i, doc in enumerate(sources, 1):
+                        st.markdown(f"**Source {i}:**")
+                        st.text(doc.page_content[:500] + "...")
+        
+        # Summary & Extraction
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📝 Generate Document Summary", use_container_width=True):
+                with st.spinner("Generating comprehensive summary..."):
+                    summary = st.session_state.doc_processor.summarize_documents()
+                    st.session_state.document_summary = summary
+        
+        with col2:
+            if st.button("🧬 Extract Biomarkers", use_container_width=True):
+                with st.spinner("Extracting biomarker data..."):
+                    biomarkers = st.session_state.doc_processor.extract_biomarkers()
+                    st.session_state.extracted_biomarkers = biomarkers
+        
+        if st.session_state.document_summary:
+            st.markdown("#### Document Summary")
+            st.markdown(st.session_state.document_summary)
+        
+        if st.session_state.extracted_biomarkers:
+            st.markdown("#### Extracted Biomarkers")
+            st.json(st.session_state.extracted_biomarkers)
+
+
+elif st.session_state.current_page == "Specialist Consultation":
+    spec = SPECIALISTS[st.session_state.active_specialist]
+    
+    st.markdown(f"""
+    <div class="main-header" style="border-left-color: {spec['color']};">
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>{spec['icon']} {st.session_state.active_specialist}</h1>
+        <p style='color: #64748B;'>{spec['bio']}</p>
+        {'<span class="langchain-badge">📚 Document-Aware</span>' if st.session_state.doc_processor.vector_store else ''}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Chat interface
+    chat_container = st.container(height=500)
+    
+    with chat_container:
+        for msg in st.session_state.messages[st.session_state.active_specialist]:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+    
+    # Input area
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        prompt = st.chat_input(f"Consult with the {st.session_state.active_specialist}...")
+    
+    with col2:
+        uploaded_image = st.file_uploader(
+            "📎",
+            type=['png', 'jpg', 'jpeg'],
+            label_visibility="collapsed",
+            key="chat_image"
+        )
+    
+    if prompt:
+        st.session_state.messages[st.session_state.active_specialist].append({
+            "role": "user", 
+            "content": prompt
+        })
+        
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Consulting clinical database..."):
+                    response = call_ai_specialist(
+                        st.session_state.active_specialist,
+                        prompt,
+                        st.session_state.messages[st.session_state.active_specialist],
+                        uploaded_image
+                    )
+                    st.markdown(response)
+        
+        st.session_state.messages[st.session_state.active_specialist].append({
+            "role": "assistant",
+            "content": response
+        })
+        st.rerun()
+    
+    # Quick actions
+    st.markdown("---")
+    st.markdown("#### Quick Consultation Topics")
+    
+    quick_topics = {
+        "Chief Medical Officer": ["Review my overall health status", "What should I prioritize?", "Create a health optimization plan"],
+        "Peptide & Bio-Regulator Expert": ["BPC-157 protocol for gut healing", "Best peptides for recovery", "Thymosin Alpha-1 dosing"],
+        "Hormone Optimization MD": ["Optimize my testosterone levels", "Thyroid panel interpretation", "HRT considerations"],
+        "Functional Nutritionist": ["Optimize my diet for longevity", "Address nutrient deficiencies", "Gut health protocol"],
+        "Performance & Longevity Coach": ["Improve my VO2 Max", "Recovery optimization", "Biological age reduction"],
+        "Sleep & Circadian Specialist": ["Improve sleep quality", "Fix my circadian rhythm", "Melatonin protocol"],
+        "Mental Health & Neuroptimization": ["Cognitive enhancement stack", "Mood optimization", "BDNF boosting strategies"]
+    }
+    
+    topics = quick_topics.get(st.session_state.active_specialist, [])
+    topic_cols = st.columns(len(topics))
+    
+    for col, topic in zip(topic_cols, topics):
+        with col:
+            if st.button(topic, use_container_width=True):
+                st.session_state.messages[st.session_state.active_specialist].append({
+                    "role": "user",
+                    "content": topic
+                })
+                st.rerun()
+
+
+elif st.session_state.current_page == "Biomarker Lab":
+    st.markdown(f"""
+    <div class="main-header">
+        <span class="langchain-badge">🔬 AI-Powered Analysis</span>
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>Precision Biomarker Laboratory</h1>
+        <p style='color: #64748B;'>Upload your lab reports for comprehensive AI-driven analysis with LangChain document intelligence.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["📤 Upload & Analyze", "📊 Biomarker Tracking", "🎯 Optimal Ranges"])
+    
+    with tab1:
+        st.markdown("### Upload Lab Report")
+        
+        lab_file = st.file_uploader(
+            "Upload your lab report",
+            type=['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'csv'],
+            help="Supports PDF, images, Word documents, and spreadsheets"
+        )
+        
+        if lab_file:
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                if lab_file.type.startswith('image'):
+                    st.image(lab_file, caption="Lab Report", use_container_width=True)
+                else:
+                    st.info(f"📄 {lab_file.name}")
+                    st.write(f"Size: {lab_file.size / 1024:.1f} KB")
+            
+            with col2:
+                analysis_type = st.selectbox(
+                    "Analysis Type",
+                    ["Comprehensive Analysis", "Biomarker Extraction Only", "Risk Assessment", "Trend Comparison"]
+                )
+                
+                if st.button("🔬 Run Analysis", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing lab report with AI..."):
+                        # Process the document
+                        file_ext = lab_file.name.split('.')[-1].lower()
+                        
+                        if file_ext in ['png', 'jpg', 'jpeg']:
+                            docs = st.session_state.doc_processor.process_image_with_vision(
+                                lab_file.getvalue(),
+                                lab_file.name
+                            )
+                        else:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}') as tmp:
+                                tmp.write(lab_file.getvalue())
+                                tmp_path = tmp.name
+                            docs = st.session_state.doc_processor.load_document(tmp_path, file_ext)
+                            os.unlink(tmp_path)
+                        
+                        # Add to vector store
+                        st.session_state.doc_processor.add_to_vector_store(docs)
+                        
+                        # Generate analysis
+                        analysis_prompt = f"""Perform a {analysis_type.lower()} of this lab report.
+                        
+                        Document content:
+                        {docs[0].page_content if docs else 'No content extracted'}
+                        
+                        Provide:
+                        1. Summary of all biomarkers found
+                        2. Values outside optimal range
+                        3. Potential concerns or red flags
+                        4. Recommendations for optimization
+                        5. Suggested follow-up tests"""
+                        
+                        analysis = call_ai_specialist(
+                            "Chief Medical Officer",
+                            analysis_prompt,
+                            []
+                        )
+                    
+                    st.markdown("### Analysis Results")
+                    st.markdown(analysis)
+    
+    with tab2:
+        st.markdown("### Biomarker History")
+        
+        selected_markers = st.multiselect(
+            "Select biomarkers to track",
+            options=["HbA1c", "Testosterone", "CRP", "Vitamin_D", "Body_Fat", "Fasting_Glucose", "HDL", "LDL", "Triglycerides", "TSH"],
+            default=["HbA1c", "Testosterone", "CRP"]
+        )
+        
+        if selected_markers:
+            fig = px.line(
+                st.session_state.patient_data,
+                x="Date",
+                y=selected_markers,
+                title="Biomarker Trends Over Time",
+                template="plotly_white"
+            )
+            fig.update_layout(
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Stats table
+            st.markdown("### Statistics")
+            stats_data = []
+            for marker in selected_markers:
+                stats_data.append({
+                    "Marker": marker,
+                    "Current": f"{st.session_state.patient_data[marker].iloc[-1]:.2f}",
+                    "Average": f"{st.session_state.patient_data[marker].mean():.2f}",
+                    "Min": f"{st.session_state.patient_data[marker].min():.2f}",
+                    "Max": f"{st.session_state.patient_data[marker].max():.2f}",
+                    "Trend": "↑" if st.session_state.patient_data[marker].iloc[-1] > st.session_state.patient_data[marker].iloc[-2] else "↓"
+                })
+            st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+    
+    with tab3:
+        st.markdown("### Optimal vs Standard Ranges")
+        st.info("These are optimal ranges for longevity, which differ from standard lab reference ranges.")
+        
+        optimal_ranges = {
+            "HbA1c": {"optimal": "4.5-5.2%", "standard": "4.0-5.6%", "concern": ">5.6%"},
+            "Testosterone (M)": {"optimal": "700-900 ng/dL", "standard": "300-1000 ng/dL", "concern": "<400 ng/dL"},
+            "CRP": {"optimal": "<0.5 mg/L", "standard": "<3.0 mg/L", "concern": ">3.0 mg/L"},
+            "Vitamin D": {"optimal": "50-80 ng/mL", "standard": "30-100 ng/mL", "concern": "<30 ng/mL"},
+            "Fasting Glucose": {"optimal": "75-90 mg/dL", "standard": "70-100 mg/dL", "concern": ">100 mg/dL"},
+            "HDL": {"optimal": ">60 mg/dL", "standard": ">40 mg/dL", "concern": "<40 mg/dL"},
+            "LDL": {"optimal": "<100 mg/dL", "standard": "<130 mg/dL", "concern": ">160 mg/dL"},
+            "Triglycerides": {"optimal": "<75 mg/dL", "standard": "<150 mg/dL", "concern": ">200 mg/dL"},
+            "TSH": {"optimal": "1.0-2.0 mIU/L", "standard": "0.4-4.0 mIU/L", "concern": ">4.0 mIU/L"},
+            "Homocysteine": {"optimal": "<7 umol/L", "standard": "5-15 umol/L", "concern": ">12 umol/L"},
+            "Ferritin (M)": {"optimal": "40-100 ng/mL", "standard": "30-400 ng/mL", "concern": ">300 ng/mL"},
+            "DHEA-S": {"optimal": "Age-adjusted upper quartile", "standard": "Varies by age", "concern": "Lower quartile"},
+        }
+        
+        df_ranges = pd.DataFrame([
+            {"Biomarker": k, "Optimal Range": v["optimal"], "Standard Range": v["standard"], "Concern Level": v["concern"]}
+            for k, v in optimal_ranges.items()
+        ])
+        st.dataframe(df_ranges, use_container_width=True, hide_index=True)
+
+
+elif st.session_state.current_page == "Wellness Protocols":
+    st.markdown(f"""
+    <div class="main-header">
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>📋 Personalized Wellness Protocols</h1>
+        <p style='color: #64748B;'>Evidence-based protocols tailored to your biomarker profile and health goals.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    tabs = st.tabs(["🧬 Peptides", "⚖️ Hormones", "🥗 Nutrition", "⚡ Longevity", "🌙 Sleep", "🧠 Cognitive"])
+    
+    with tabs[0]:
+        st.subheader("Peptide Protocol Stack")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            #### Tissue Repair & Recovery
+            
+            **BPC-157** (Body Protection Compound)
+            - Dose: 250-500mcg twice daily
+            - Route: Subcutaneous injection
+            - Focus: Gut healing, tendon repair, neuroprotection
+            - Duration: 4-8 weeks
+            
+            **TB-500** (Thymosin Beta-4)
+            - Dose: 2.5mg twice weekly (loading), 2.5mg weekly (maintenance)
+            - Route: Subcutaneous injection
+            - Focus: Systemic tissue repair, anti-inflammatory
+            - Duration: 4-6 weeks
+            
+            **GHK-Cu** (Copper Peptide)
+            - Dose: 1-2mg daily
+            - Route: Subcutaneous or topical
+            - Focus: Skin health, wound healing, anti-aging
+            """)
+        
+        with col2:
+            st.markdown("""
+            #### Growth Hormone Optimization
+            
+            **CJC-1295/Ipamorelin**
+            - Dose: 100mcg/200mcg combined
+            - Timing: Before bed (fasted)
+            - Focus: GH pulse optimization, body composition
+            - Duration: 8-12 weeks
+            
+            **Tesamorelin**
+            - Dose: 2mg daily
+            - Timing: Before bed
+            - Focus: Visceral fat reduction, cognitive support
+            
+            #### Immune Modulation
+            
+            **Thymosin Alpha-1**
+            - Dose: 1.5mg twice weekly
+            - Focus: Immune enhancement, anti-viral
+            - Use: Preventive or during illness
+            """)
+        
+        st.warning("⚠️ All peptide protocols require medical supervision. Source quality and proper reconstitution are critical.")
+    
+    with tabs[1]:
+        st.subheader("Hormone Optimization Strategy")
+        
+        latest = st.session_state.patient_data.iloc[-1]
+        
+        st.markdown(f"""
+        #### Current Status
+        Based on your latest labs:
+        - **Testosterone**: {latest['Testosterone']:.0f} ng/dL
+        - **TSH**: {latest['TSH']:.2f} mIU/L
+        """)
+        
+        if latest['Testosterone'] > 600:
+            st.success("✓ Testosterone levels are in optimal range. Focus on maintenance.")
+        else:
+            st.warning("⚠️ Testosterone could be optimized. Consider evaluation for TRT.")
+        
+        st.markdown("""
+        #### Optimization Strategies
+        
+        **Natural Support**
+        - DHEA: 25-50mg daily (if low)
+        - Zinc: 30mg daily
+        - Vitamin D: 5000-10000 IU daily
+        - Boron: 6-9mg daily
+        - Ashwagandha: 600mg daily
+        - Tongkat Ali: 400mg daily
+        
+        **Lifestyle Factors**
+        - Strength training 3-4x/week
+        - Sleep 7-9 hours (optimize quality)
+        - Manage stress (cortisol suppresses T)
+        - Avoid endocrine disruptors
+        - Maintain healthy body composition
+        """)
+    
+    with tabs[2]:
+        st.subheader("Metabolic Nutrition Protocol")
+        
+        st.markdown(f"""
+        #### Targets
+        Based on your HbA1c of {st.session_state.patient_data.iloc[-1]['HbA1c']:.1f}%, optimizing for metabolic health.
+        """)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            **Protein**
+            - Target: 1.0-1.2g per lb lean mass
+            - Timing: 30-50g per meal
+            - Focus: Complete proteins
+            - Sources: Grass-fed meat, wild fish, eggs
+            """)
+        
+        with col2:
+            st.markdown("""
+            **Carbohydrates**
+            - Approach: Carb cycling
+            - Training days: 100-150g
+            - Rest days: 50-75g
+            - Sources: Vegetables, berries, roots
+            """)
+        
+        with col3:
+            st.markdown("""
+            **Fats**
+            - Target: 30-40% of calories
+            - Focus: Omega-3, MUFA
+            - Avoid: Seed oils, trans fats
+            - Sources: Olive oil, avocado, fatty fish
+            """)
+        
+        st.markdown("""
+        #### Key Supplements
+        - **Berberine**: 500mg before largest meal (glucose control)
+        - **Omega-3**: 3-4g EPA/DHA daily
+        - **Magnesium**: 400-600mg (glycinate or threonate)
+        - **Creatine**: 5g daily
+        - **Vitamin D3/K2**: 5000IU/200mcg daily
+        """)
+    
+    with tabs[3]:
+        st.subheader("Longevity Stack")
+        
+        st.markdown("""
+        #### Core Longevity Interventions
+        
+        **Cellular Health**
+        - NMN: 500-1000mg daily (NAD+ precursor)
+        - Resveratrol: 500mg with fat (sirtuin activation)
+        - Quercetin + Fisetin: Senolytic protocol monthly
+        - Spermidine: 1-2mg daily (autophagy)
+        
+        **Mitochondrial Support**
+        - CoQ10 (Ubiquinol): 200-300mg daily
+        - PQQ: 20mg daily
+        - Alpha Lipoic Acid: 600mg daily
+        - Acetyl L-Carnitine: 1500mg daily
+        
+        **Cardiovascular Longevity**
+        - Taurine: 2-3g daily
+        - Glycine: 3-5g before bed
+        - Citrus Bergamot: 500mg twice daily
+        
+        #### Hormetic Stressors
+        - **Sauna**: 4x/week, 20min at 170-190°F
+        - **Cold Exposure**: 2-3min cold shower or plunge daily
+        - **Fasting**: 16:8 daily or 24hr weekly
+        - **Exercise**: Zone 2 (150min/week) + strength (3x/week)
+        """)
+    
+    with tabs[4]:
+        st.subheader("Sleep Optimization Protocol")
+        
+        st.markdown("""
+        #### Sleep Architecture Goals
+        - Total sleep: 7-9 hours
+        - Deep sleep: 1.5-2 hours (20-25%)
+        - REM sleep: 1.5-2 hours (20-25%)
+        - Sleep efficiency: >85%
+        
+        #### Evening Protocol
+        
+        **3 Hours Before Bed**
+        - Last meal (no late eating)
+        - Dim lights, blue light blocking glasses
+        - No intense exercise
+        
+        **1-2 Hours Before Bed**
+        - Glycine: 3g
+        - Magnesium Threonate: 144mg elemental Mg
+        - L-Theanine: 200mg
+        - Apigenin: 50mg (optional)
+        
+        **At Bedtime**
+        - Bedroom temp: 65-68°F
+        - Complete darkness (blackout)
+        - White noise if needed
+        - Melatonin: 0.3-0.5mg (only if needed, sublingual)
+        
+        #### Morning Protocol
+        - Sunlight within 30min of waking (10+ min)
+        - No snooze button
+        - Consistent wake time (±30min)
+        """)
+    
+    with tabs[5]:
+        st.subheader("Cognitive Enhancement Stack")
+        
+        st.markdown("""
+        #### Daily Cognitive Support
+        
+        **Foundation**
+        - Lion's Mane: 1000mg daily (NGF support)
+        - Omega-3 DHA: 2g daily (brain structure)
+        - Phosphatidylserine: 300mg daily
+        - Bacopa Monnieri: 300mg daily (memory)
+        
+        **Acute Performance**
+        - Alpha-GPC: 300-600mg (focus tasks)
+        - Caffeine + L-Theanine: 100mg/200mg (calm focus)
+        - Modafinil: 100-200mg (prescription, occasional)
+        
+        **Neuroprotection**
+        - Curcumin (Longvida): 400mg daily
+        - Blueberry extract: 500mg daily
+        - Cocoa flavanols: 500mg daily
+        
+        #### BDNF Optimization
+        - High-intensity exercise
+        - Intermittent fasting
+        - Cold exposure
+        - Social engagement
+        - Novel learning experiences
+        - Quality sleep
+        """)
+
+
+elif st.session_state.current_page == "Analytics & Trends":
+    st.markdown(f"""
+    <div class="main-header">
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>📊 Health Analytics & Trends</h1>
+        <p style='color: #64748B;'>Deep dive into your health data with advanced visualizations.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Overview metrics
+    st.markdown("### Overall Health Score")
+    
+    # Calculate a composite health score
+    latest = st.session_state.patient_data.iloc[-1]
+    
+    scores = {
+        "Metabolic": min(100, max(0, 100 - abs(latest['HbA1c'] - 5.0) * 20)),
+        "Hormonal": min(100, max(0, (latest['Testosterone'] - 400) / 5)),
+        "Inflammatory": min(100, max(0, 100 - latest['CRP'] * 30)),
+        "Cardiovascular": min(100, max(0, 100 - abs(latest['LDL'] - 90) * 0.5)),
+        "Body Composition": min(100, max(0, 100 - abs(latest['Body_Fat'] - 15) * 3)),
+    }
+    
+    overall_score = np.mean(list(scores.values()))
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=overall_score,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            title={'text': "Health Score"},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': SECONDARY_COLOR},
+                'steps': [
+                    {'range': [0, 50], 'color': "#FEE2E2"},
+                    {'range': [50, 75], 'color': "#FEF3C7"},
+                    {'range': [75, 100], 'color': "#D1FAE5"}
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75,
+                    'value': 90
+                }
+            }
+        ))
+        fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+    
+    with col2:
+        # Radar chart of subscores
+        categories = list(scores.keys())
+        values = list(scores.values())
+        
+        fig_radar = go.Figure(data=go.Scatterpolar(
+            r=values + [values[0]],
+            theta=categories + [categories[0]],
+            fill='toself',
+            fillcolor=f'rgba(16, 185, 129, 0.3)',
+            line=dict(color=SECONDARY_COLOR, width=2)
+        ))
+        
+        fig_radar.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 100])
+            ),
+            showlegend=False,
+            title="Health Dimension Scores",
+            height=300,
+            margin=dict(l=40, r=40, t=60, b=40)
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+    
+    # Correlation analysis
+    st.markdown("### Biomarker Correlations")
+    
+    corr_matrix = st.session_state.patient_data.drop(columns=['Date']).corr()
+    
+    fig_corr = px.imshow(
+        corr_matrix,
+        text_auto='.2f',
+        color_continuous_scale='RdBu_r',
+        title="Biomarker Correlation Matrix"
+    )
+    fig_corr.update_layout(height=500)
+    st.plotly_chart(fig_corr, use_container_width=True)
+    
+    # Trend analysis
+    st.markdown("### Trend Analysis")
+    
+    trend_marker = st.selectbox("Select biomarker for trend analysis", options=list(corr_matrix.columns))
+    
+    if trend_marker:
+        fig_trend = go.Figure()
+        
+        # Actual values
+        fig_trend.add_trace(go.Scatter(
+            x=st.session_state.patient_data['Date'],
+            y=st.session_state.patient_data[trend_marker],
+            mode='lines+markers',
+            name='Actual',
+            line=dict(color=PRIMARY_COLOR, width=2)
+        ))
+        
+        # Rolling average
+        rolling_avg = st.session_state.patient_data[trend_marker].rolling(window=4).mean()
+        fig_trend.add_trace(go.Scatter(
+            x=st.session_state.patient_data['Date'],
+            y=rolling_avg,
+            mode='lines',
+            name='4-Week Average',
+            line=dict(color=SECONDARY_COLOR, width=2, dash='dash')
+        ))
+        
+        fig_trend.update_layout(
+            title=f"{trend_marker} Trend Analysis",
+            template="plotly_white",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+
+elif st.session_state.current_page == "Settings":
+    st.markdown(f"""
+    <div class="main-header">
+        <h1 style='margin:0; color: {PRIMARY_COLOR};'>⚙️ Settings & Preferences</h1>
+        <p style='color: #64748B;'>Configure your AI Hope Wellness experience.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["Profile", "Data Management", "API Configuration"])
+    
+    with tab1:
+        st.markdown("### User Profile")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("Name", value="Premium User")
+            st.number_input("Age", value=35, min_value=18, max_value=120)
+            st.selectbox("Biological Sex", ["Male", "Female"])
+        
+        with col2:
+            st.number_input("Height (inches)", value=70)
+            st.number_input("Weight (lbs)", value=175)
+            st.selectbox("Activity Level", ["Sedentary", "Lightly Active", "Moderately Active", "Very Active", "Athlete"])
+        
+        st.markdown("### Health Goals")
+        st.multiselect(
+            "Select your primary health goals",
+            ["Longevity", "Body Composition", "Energy", "Cognitive Performance", "Sleep Quality", "Hormone Optimization", "Disease Prevention", "Athletic Performance"],
+            default=["Longevity", "Energy"]
+        )
+    
+    with tab2:
+        st.markdown("### Document Management")
+        
+        if st.session_state.uploaded_files:
+            st.markdown(f"**{len(st.session_state.uploaded_files)} document(s) in library**")
+            
+            if st.button("🗑️ Clear All Documents", type="secondary"):
+                st.session_state.doc_processor = HealthDocumentProcessor()
+                st.session_state.uploaded_files = []
+                st.session_state.document_summary = None
+                st.session_state.extracted_biomarkers = None
+                st.success("All documents cleared.")
+                st.rerun()
+        else:
+            st.info("No documents uploaded yet.")
+        
+        st.markdown("### Conversation History")
+        
+        total_messages = sum(len(msgs) for msgs in st.session_state.messages.values())
+        st.markdown(f"**{total_messages} messages across {len(SPECIALISTS)} specialists**")
+        
+        if st.button("🗑️ Clear All Conversations", type="secondary"):
+            st.session_state.messages = {k: [] for k in SPECIALISTS.keys()}
+            st.success("All conversations cleared.")
+            st.rerun()
+    
+    with tab3:
+        st.markdown("### API Configuration")
+        st.info("API keys are managed through environment variables for security.")
+        
+        st.markdown("""
+        **Required Environment Variables:**
+        - `OPENAI_API_KEY` - For AI specialist consultations
+        
+        **Optional:**
+        - `LANGCHAIN_API_KEY` - For LangSmith tracing
+        - `LANGCHAIN_PROJECT` - LangSmith project name
+        """)
+        
+        if os.getenv("OPENAI_API_KEY"):
+            st.success("✓ OpenAI API key configured")
+        else:
+            st.error("✗ OpenAI API key not found")
+
+
+# --- FOOTER ---
+st.markdown(f"""
+<div class="agency-footer">
+    <p style='font-size: 1.1rem; margin-bottom: 0.5rem;'>
+        <strong>{BRAND_NAME}</strong> | Powered by 🦜 LangChain
+    </p>
+    <p style='color: #94A3B8; margin-bottom: 1rem;'>
+        Developed by <strong>{CREATED_BY}</strong> | Premium Health Intelligence Platform
+    </p>
+    <p style='font-size: 0.75rem; color: #64748B; max-width: 800px; margin: 0 auto;'>
+        <strong>DISCLAIMER:</strong> This platform is for informational and educational purposes only. 
+        AI Hope Wellness does not provide medical prescriptions, diagnosis, or treatment. 
+        The AI specialists provide general health information and should not replace consultation with qualified healthcare professionals. 
+        Always consult with your physician before starting any new health protocol, supplement, or treatment plan.
+    </p>
+    <p style='font-size: 0.7rem; color: #94A3B8; margin-top: 1rem;'>
+        © 2026 {BRAND_NAME} | All Rights Reserved
+    </p>
+</div>
+""", unsafe_allow_html=True)
