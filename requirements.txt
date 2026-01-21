@@ -1,3 +1,4 @@
+streamlit
 streamlit-antd-components
 # OpenAI
 openai>=1.12.0
