@@ -6,3 +6,27 @@ secondaryBackgroundColor = "#DCFCE7"
 textColor = "#1a1a1a"
 font = "sans serif"
 
+[ui]
+sidebar = "expanded"   # 👈 Force sidebar to always be visible
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 200
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[runner]
+magicEnabled = true
+fastReruns = true
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[logger]
+level = "info"
