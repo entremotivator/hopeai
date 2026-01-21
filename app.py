@@ -4631,26 +4631,29 @@ elif st.session_state.current_page == "Settings":
 # =====================================================
 # FOOTER
 # =====================================================
-st.markdown(f"""
+st.markdown(
+    f"""
 <div class="agency-footer">
-    <p style='font-size: 1.2rem; margin-bottom: 0.5rem; font-weight: 700;'>
+    <p style="font-size: 1.2rem; margin-bottom: 0.5rem; font-weight: 700;">
         🏥 {BRAND_NAME}
     </p>
-    <p style='color: #64748B; margin-bottom: 0.75rem;'>
+    <p style="color: #64748B; margin-bottom: 0.75rem;">
         Powered by 🦜 LangChain & GPT-4 | Version {VERSION}
     </p>
-    <p style='color: #94A3B8; margin-bottom: 1.5rem;'>
+    <p style="color: #94A3B8; margin-bottom: 1.5rem;">
         Developed by <strong>{CREATED_BY}</strong> | Premium Health Intelligence Platform
     </p>
-    <p style='font-size: 0.7rem; color: #94A3B8; max-width: 900px; margin: 0 auto; line-height: 1.6;'>
+    <p style="font-size: 0.7rem; color: #94A3B8; max-width: 900px; margin: 0 auto; line-height: 1.6;">
         <strong>DISCLAIMER:</strong> This platform is for informational and educational purposes only. 
         {BRAND_NAME} does not provide medical prescriptions, diagnosis, or treatment. 
         The AI specialists provide general health information based on current research and should not replace 
         consultation with qualified healthcare professionals. Always consult with your physician before 
         starting any new health protocol, supplement, or treatment plan.
     </p>
-    <p style='font-size: 0.65rem; color: #CBD5E1; margin-top: 1.5rem;'>
+    <p style="font-size: 0.65rem; color: #CBD5E1; margin-top: 1.5rem;">
         © 2026 {BRAND_NAME} | {CREATED_BY} | All Rights Reserved
     </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
