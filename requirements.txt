@@ -1,0 +1,38 @@
+# AI Hope Wellness - Streamlit Community Cloud Requirements
+# Created by The ATM Agency
+
+# Core Framework
+streamlit>=1.31.0
+
+# OpenAI
+openai>=1.12.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+plotly>=5.18.0
+
+# LangChain Core
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.20
+
+# Vector Store
+faiss-cpu>=1.7.4
+
+# Document Processing
+PyPDF2>=3.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+python-pptx>=0.6.23
+pyyaml>=6.0.0
+markdown>=3.5.0
+
+# Unstructured (optional - for advanced document parsing)
+# Note: These have heavy dependencies, comment out if deployment fails
+unstructured>=0.12.0
+unstructured[pdf]>=0.12.0
